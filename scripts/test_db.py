@@ -1,6 +1,12 @@
 import asyncio
 import asyncpg
 from datetime import datetime
+import sys
+import os
+
+# Set UTF-8 encoding for Windows console
+if sys.platform == "win32":
+    os.system("chcp 65001 > nul")
 
 async def test_database():
     # Connect to database
@@ -20,11 +26,11 @@ async def test_database():
             task_id, "test_user", "Test task description", "pending",
             datetime.utcnow(), datetime.utcnow()
         )
-        print("✓ Task inserted successfully")
+        print("[OK] Task inserted successfully")
 
         # Test: Read the task
         row = await conn.fetchrow("SELECT * FROM tasks WHERE id = $1", task_id)
-        print(f"✓ Task retrieved: {row['id']} - {row['status']}")
+        print(f"[OK] Task retrieved: {row['id']} - {row['status']}")
 
         # Test: Insert subtask result
         await conn.execute(
@@ -36,7 +42,7 @@ async def test_database():
             task_id, "subtask_001", "agent_1", "completed",
             '{"result": "success"}', 2.5
         )
-        print("✓ Subtask result inserted successfully")
+        print("[OK] Subtask result inserted successfully")
 
         # Test: Insert log entry
         await conn.execute(
@@ -46,21 +52,21 @@ async def test_database():
             """,
             "agent_1", task_id, "INFO", "Test log message"
         )
-        print("✓ Agent log inserted successfully")
+        print("[OK] Agent log inserted successfully")
 
         # Test: Query with indexes
         count = await conn.fetchval(
             "SELECT COUNT(*) FROM tasks WHERE status = $1", "pending"
         )
-        print(f"✓ Index query successful: {count} pending tasks")
+        print(f"[OK] Index query successful: {count} pending tasks")
 
         # Cleanup
         await conn.execute("DELETE FROM subtask_results WHERE task_id = $1", task_id)
         await conn.execute("DELETE FROM agent_logs WHERE task_id = $1", task_id)
         await conn.execute("DELETE FROM tasks WHERE id = $1", task_id)
-        print("✓ Cleanup successful")
+        print("[OK] Cleanup successful")
 
-        print("\n🎉 All database tests passed!")
+        print("\n[SUCCESS] All database tests passed!")
 
     finally:
         await conn.close()
