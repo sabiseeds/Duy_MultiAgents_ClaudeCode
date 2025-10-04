@@ -1,300 +1,223 @@
-# Research & Technical Decisions
+# Research: Claude Token SDK Migration
 
-## Claude Agent SDK Integration
-
-**Decision**: Use official Claude Agent SDK (`claude-agent-sdk[all]>=1.0.0`) for all agent implementations
-
-**Rationale**:
-- Native tool integration via MCP servers (database, files, APIs)
-- Built-in file operations (Read, Write, Bash) without custom implementation
-- Subagent delegation for parallel specialized subtasks
-- Checkpoint system for saving/restoring state in long tasks
-- Automated hooks for triggering actions at specific points
-- Configurable permission modes (approveEdits, approveAll, auto)
-- Context as file system (navigate folders instead of prompt stuffing)
-
-**Alternatives Considered**:
-- Direct Anthropic API calls: Would require manual tool implementation, no native file ops, no checkpoints
-- LangChain agents: Less integrated with Claude, more abstraction overhead
-- Custom agent framework: Significant development time, reinventing solved problems
-
-**Implementation Details**:
-- ClaudeSDKClient with ClaudeAgentOptions for configuration
-- MCP server creation via `create_sdk_mcp_server` with custom tools
-- Task-specific workspaces with context/output/temp directories
-- System prompts define agent capabilities and available tools
-- Permission mode set via environment variable (SDK_PERMISSION_MODE)
+**Date**: 2025-10-04
+**Feature**: Migrate from Anthropic API key to Claude Code token authentication
 
 ---
 
-## Task Decomposition Strategy
+## Overview
 
-**Decision**: Use Claude API with prompt engineering for task analysis and decomposition
+This research documents the investigation into migrating the Multi-Agent Task Execution System from Anthropic API key authentication to Claude Code integrated token authentication, based on the comprehensive guide in `CLAUDE_TOKEN_SDK_GUIDE.md`.
+
+---
+
+## 1. Authentication Architecture
+
+### Decision: Hybrid Authentication Pattern
+
+**What was chosen**: Implement a `HybridClaudeClient` class that automatically detects the runtime environment and chooses the appropriate authentication method.
 
 **Rationale**:
-- Leverages Claude's natural language understanding and reasoning
-- Can identify task dependencies through context analysis
-- Estimates execution duration and priority based on task complexity
-- Determines required capabilities from task description
+1. **Flexibility**: Works seamlessly in both Claude Code environment (production) and standalone mode (development/testing)
+2. **No breaking changes**: Existing API key configuration continues to work
+3. **Cost optimization**: Automatically uses Claude Code tokens when available, eliminating API costs
+4. **Developer experience**: Developers don't need to manually switch authentication methods
 
-**Alternatives Considered**:
-- Rule-based decomposition: Too rigid, cannot handle diverse task types
-- Fine-tuned model: Expensive, requires training data, maintenance overhead
-- Manual decomposition: Defeats purpose of automated system
+**Alternatives considered**:
+- **Claude Code only**: Rejected because it would break development workflows and CI/CD pipelines that run outside Claude Code environment
+- **API key only**: Rejected because it misses cost savings and integrated features of Claude Code
+- **Manual switching**: Rejected because it adds complexity and error-prone configuration
 
-**Implementation Approach**:
+---
+
+## 2. SDK Integration Approach
+
+### Decision: ClaudeSDKClient with AsyncAnthropic fallback
+
+**What was chosen**: Replace direct `AsyncAnthropic()` usage with `ClaudeSDKClient` from `claude_code_sdk` when in Claude Code environment, maintaining `AsyncAnthropic` as fallback.
+
+**Rationale**:
+1. **Zero-config authentication**: In Claude Code environment, authentication is automatic via `CLAUDECODE=1`
+2. **Connection reuse**: SDK handles connection pooling internally
+3. **System prompt enforcement**: SDK ensures system prompts override user instructions (critical for agent behavior)
+4. **Async compatibility**: SDK provides async/await interface matching existing code patterns
+
+**Alternatives considered**:
+- **Complete SDK replacement**: Rejected because it would require rewriting all Claude interaction code
+- **Wrapper around AsyncAnthropic**: Rejected because it doesn't gain Claude Code integration benefits
+- **Dual imports**: Rejected as too complex and error-prone
+
+---
+
+## 3. Environment Detection Strategy
+
+### Decision: Environment variable + API key presence check
+
+**What was chosen**: Use `CLAUDECODE=1` environment variable as primary indicator, with API key presence as secondary check.
+
+**Rationale**:
+1. **Explicit over implicit**: Clear environment variable makes runtime behavior predictable
+2. **Easy configuration**: Single line in .env file to enable Claude Code mode
+3. **CI/CD compatibility**: Easy to set in different environments
+4. **Validation**: Can verify authentication setup before starting services
+
+**Alternatives considered**:
+- **Claude CLI detection**: Rejected because it requires subprocess calls and path detection
+- **Automatic discovery**: Rejected because it's unreliable across platforms
+- **Config file**: Rejected because environment variables are standard for 12-factor apps
+
+---
+
+## 4. API Key Suppression Pattern
+
+### Decision: Temporary environment variable removal during Claude Code execution
+
+**What was chosen**: When `CLAUDECODE=1`, temporarily remove `ANTHROPIC_API_KEY` from environment during SDK client creation, then restore it afterward.
+
+**Rationale**:
+1. **Forces integrated auth**: SDK will use Claude Code token when API key is absent
+2. **Prevents accidental billing**: Ensures Claude Code environment uses free token
+3. **Reversible**: Original API key restored after execution for other components
+4. **Explicit intent**: Makes authentication method choice clear in code
+
+**Alternatives considered**:
+- **Permanent removal**: Rejected because other components might need API key
+- **SDK configuration**: Rejected because SDK auto-detects based on environment
+- **Separate clients**: Rejected as too complex for single operation
+
+---
+
+## 5. Configuration Management
+
+### Decision: Extend existing Settings class with Claude Code options
+
+**What was chosen**: Add Claude Code configuration to existing `pydantic-settings` based `Settings` class in `shared/config.py`.
+
+**New configuration fields**:
 ```python
-# Prompt structure
-"""
-Analyze and decompose this task into subtasks.
-Task: {description}
-Available capabilities: {capabilities_list}
-
-For each subtask specify:
-1. description (clear and specific)
-2. required_capabilities (from list above)
-3. dependencies (0-based subtask indices)
-4. priority (0-10, higher = more important)
-5. estimated_duration (seconds)
-
-Respond with JSON array: [{"description": "...", ...}]
-"""
+CLAUDECODE: str = Field(default="0", description="Claude Code environment flag (1=enabled)")
+CLAUDE_CODE_PATH: str = Field(default="claude", description="Path to Claude CLI")
+CLAUDE_MODEL: str = Field(default="claude-sonnet-4-20250514", description="Claude model to use")
+CLAUDE_PERMISSION_MODE: str = Field(default="bypassPermissions", description="SDK permission mode")
 ```
 
-**Output Handling**:
-- Extract JSON array from Claude response via regex
-- Map subtask indices to generated IDs for dependency tracking
-- Fallback to single subtask if decomposition fails
-- Validate that capabilities exist in system
-
----
-
-## Message Queue Architecture
-
-**Decision**: Redis LIST data structures with BLPOP/RPUSH for task and result queues
-
 **Rationale**:
-- Atomic operations ensure no race conditions
-- BLPOP provides blocking dequeue (efficient waiting)
-- Simple pub/sub for broadcasting
-- Supports distributed coordination across services
-- Low latency (<1ms for queue operations)
-
-**Alternatives Considered**:
-- RabbitMQ: Additional service dependency, higher complexity
-- Kafka: Overkill for this scale, complex setup
-- PostgreSQL LISTEN/NOTIFY: Less reliable for queuing, polling overhead
-- In-memory queues: Not distributed, lost on restart
-
-**Queue Design**:
-```
-agent_tasks (LIST)
-  → Subtasks awaiting execution
-  → Format: {"task_id": "...", "subtask": {...}, "context": {...}}
-  → Producers: Orchestrator (initial tasks, newly-ready tasks)
-  → Consumers: Task dispatcher (background worker)
-
-agent_results (LIST)
-  → Completed subtask results
-  → Format: {"task_id": "...", "subtask_id": "...", "agent_id": "...", "status": "...", "output": {...}}
-  → Producers: Agent services (after subtask execution)
-  → Consumers: Result processor (background worker)
-```
-
-**Error Handling**:
-- Failed dequeue returns None (handled gracefully)
-- Re-queue on assignment failure
-- Timeout for BLPOP prevents indefinite blocking
+1. **Consistency**: Maintains existing configuration pattern
+2. **Validation**: Pydantic validates environment variables automatically
+3. **Type safety**: Typed configuration prevents runtime errors
+4. **Documentation**: Field descriptions serve as inline documentation
 
 ---
 
-## Agent Capability Matching
+## 6. Testing Strategy
 
-**Decision**: Enum-based static capability assignment with Redis-based agent registry
+### Decision: Three-tier test pyramid with authentication-specific tests
 
-**Rationale**:
-- Predictable routing (agents don't change capabilities at runtime)
-- Fast lookup via Redis SET for active agents + HASH for capabilities
-- No complex scoring or load balancing initially (first available)
-- Clear categorization of agent specializations
+**Test organization**:
 
-**Capabilities**:
-1. **DATA_ANALYSIS**: Statistical analysis, data visualization, report generation
-2. **WEB_SCRAPING**: HTTP requests, HTML parsing, web data extraction
-3. **CODE_GENERATION**: Writing code, refactoring, code analysis
-4. **FILE_PROCESSING**: File I/O, format conversion, data transformation
-5. **DATABASE_OPERATIONS**: SQL queries, schema changes, data migration
-6. **API_INTEGRATION**: External API calls, authentication, response handling
+**Unit tests** (70% of tests):
+- `test_auth_detection.py`: Environment variable detection logic
+- `test_hybrid_client.py`: Authentication method selection
+- `test_token_fallback.py`: API key fallback behavior
+- `test_config_validation.py`: Configuration validation logic
 
-**Agent Assignments**:
-- Agent 1 (port 8001): DATA_ANALYSIS, CODE_GENERATION
-- Agent 2 (port 8002): WEB_SCRAPING, API_INTEGRATION
-- Agent 3 (port 8003): FILE_PROCESSING, DATABASE_OPERATIONS
-- Agent 4 (port 8004): CODE_GENERATION, API_INTEGRATION
-- Agent 5 (port 8005): DATA_ANALYSIS, DATABASE_OPERATIONS
+**Integration tests** (20% of tests):
+- `test_task_execution_token.py`: End-to-end task execution with token auth
+- `test_agent_coordination_token.py`: Multi-agent coordination with token auth
+- `test_auth_switching.py`: Switching between authentication methods
 
-**Matching Algorithm**:
-1. For each required capability in subtask (in order)
-2. Query Redis for available agents with that capability
-3. If found, assign to first available agent
-4. If not found, re-queue subtask and retry later
-
-**Future Enhancements** (not in scope):
-- Load balancing (least busy agent)
-- Capability scoring (match quality)
-- Dynamic capability learning
+**Contract tests** (10% of tests):
+- `test_claude_sdk_contract.py`: Validate SDK response format matches expectations
+- `test_system_prompt_enforcement.py`: Verify system prompts override user input
 
 ---
 
-## Shared State Management
+## 7. Migration Path
 
-**Decision**: Hybrid approach using PostgreSQL, Redis, and file storage
+### Decision: Incremental migration with backward compatibility
 
-**PostgreSQL** (persistent, audit trail):
-- `tasks` table: All task data including subtasks (JSONB), status, timestamps
-- `subtask_results` table: Individual subtask outputs, execution time, agent_id
-- `agent_logs` table: Activity logs for debugging and monitoring
+**Migration phases**:
 
-**Redis** (ephemeral, real-time):
-- `agent:{agent_id}` HASH: Current agent status (availability, CPU, memory, current_task)
-- `active_agents` SET: List of registered agent IDs
-- `state:{key}` STRING: Shared state between agents (expire after TTL)
-- `lock:{name}` STRING: Distributed locks for coordination
+**Phase 1**: Infrastructure (no behavior change)
+- Add `claude-code-sdk` to requirements.txt
+- Add `CLAUDECODE` environment variable to config
+- Update `.env.example` with new variables
 
-**File Storage** (`./shared_files`):
-- `{task_id}/context/`: Task details and previous results (JSON files)
-- `{task_id}/output/`: Agent results (result.json, generated files)
-- `{task_id}/temp/`: Temporary files during execution
+**Phase 2**: Hybrid client implementation
+- Create `HybridClaudeClient` class
+- Implement authentication detection
+- Implement both authentication paths
 
-**Rationale**:
-- PostgreSQL: Historical queries, complex filtering, ACID guarantees
-- Redis: Low-latency reads, TTL expiration, pub/sub notifications
-- Files: Large outputs don't bloat database, agents can read/write naturally
+**Phase 3**: Integration
+- Update `orchestrator/task_analyzer.py` to use hybrid client
+- Update `agent/agent_service.py` to use hybrid client
 
-**Data Flow**:
-1. Task created → PostgreSQL (persistent record)
-2. Subtasks queued → Redis LIST (fast distribution)
-3. Agent picks subtask → Redis HASH updated (status tracking)
-4. Agent writes output → File storage (large data)
-5. Result enqueued → Redis LIST (fast notification)
-6. Result processed → PostgreSQL (audit trail)
+**Phase 4**: Validation
+- Run full test suite with `CLAUDECODE=0` (API key mode)
+- Run full test suite with `CLAUDECODE=1` (token mode)
+- Performance benchmarks to verify no regressions
+
+**Phase 5**: Production deployment
+- Set `CLAUDECODE=1` in production environment
+- Monitor for authentication errors
+- Validate cost reduction (no API charges)
 
 ---
 
-## Error Handling and Retry
+## 8. Error Handling and Resilience
 
-**Decision**: Explicit failure tracking with manual retry, no automatic retry
+### Decision: Comprehensive error handling with retry logic and actionable messages
 
-**Failure Detection**:
-- Agent service catches exceptions during subtask execution
-- Sets subtask status to "failed" with error message
-- Logs error to PostgreSQL agent_logs table
-- Enqueues failure result to result queue
+**Error categories**:
+- **Control request timeout**: Claude CLI not installed or not in PATH
+- **Credit balance too low**: Fallback to API key or prompt for Claude Code setup
+- **Authentication failure**: Check token validity and environment setup
+- **Rate limiting**: Implement backoff and retry
 
-**Dependency Blocking**:
-- Result processor checks if failed subtask has dependents
-- Marks all dependent subtasks as "blocked" (not queued)
-- Updates task status to "failed" if critical path blocked
-- User sees which subtask failed and which are blocked
-
-**Manual Retry**:
-- User reviews error message in UI
-- User can reset failed subtask to "pending"
-- System re-queues subtask for execution
-- Blocked dependents automatically unblocked when prerequisite succeeds
-
-**Rationale**:
-- Auto-retry can cause infinite loops with persistent errors
-- Manual intervention allows fixing root cause (bad input, configuration)
-- Explicit blocking prevents partial execution of broken workflows
-- Audit trail preserved (original failure logged)
-
-**No Retry Scenarios**:
-- Invalid input data (user must correct)
-- Missing API credentials (user must configure)
-- Agent capability mismatch (user must reassign)
-- Timeout exceeded (user must adjust task complexity)
+**Implementation requirements**:
+- Authentication validation before execution
+- Timeout handling for SDK initialization
+- Retry logic for transient failures
+- User-friendly error messages with remediation steps
 
 ---
 
-## Performance Optimization
+## 9. Performance Considerations
 
-**Connection Pooling**:
-- **PostgreSQL**: asyncpg pool with min_size=2, max_size=20, command_timeout=60s
-- **Redis**: Single connection per service, reused for all operations
-- **HTTP (agent-to-orchestrator)**: httpx.AsyncClient with timeout=5s
+### Decision: Connection reuse and response streaming
 
-**Rationale**:
-- Pool prevents connection creation overhead on every query
-- Async operations allow concurrent I/O without blocking
-- Timeouts prevent hanging on network issues
+**Performance optimizations**:
+- Connection reuse pattern (`OptimizedClaudeClient` with context manager)
+- Batch processing with rate limiting
+- Response streaming for large outputs
 
-**Indexing Strategy**:
-```sql
--- Fast task lookups by status/user/time
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_user ON tasks(user_id);
-CREATE INDEX idx_tasks_created ON tasks(created_at DESC);
-
--- Fast subtask result queries
-CREATE INDEX idx_subtask_results_task ON subtask_results(task_id);
-CREATE INDEX idx_subtask_results_agent ON subtask_results(agent_id);
-
--- Fast log queries
-CREATE INDEX idx_agent_logs_agent ON agent_logs(agent_id);
-CREATE INDEX idx_agent_logs_task ON agent_logs(task_id);
-CREATE INDEX idx_agent_logs_created ON agent_logs(created_at DESC);
-```
-
-**Async/Await Throughout**:
-- All I/O operations use async/await (database, Redis, HTTP, file)
-- Background workers run as asyncio tasks
-- Prevents thread blocking, maximizes concurrency
-
-**Caching** (future enhancement):
-- Task decomposition results (avoid re-analyzing identical tasks)
-- Agent capability lookups (reduce Redis queries)
-- User session data (reduce database hits)
+**Performance targets**:
+- SDK initialization: <2s (cached after first request)
+- Query response: <200ms p95 (same as current API)
+- Memory overhead: <50MB (SDK connection pool)
+- Concurrent requests: 5 agents × 1 request each = 5 concurrent
 
 ---
 
-## Monitoring and Observability
+## Research Summary
 
-**Logging**:
-- **PostgreSQL `agent_logs` table**: Centralized activity log
-  - Columns: agent_id, task_id, log_level (INFO/DEBUG/ERROR), message, metadata (JSONB), created_at
-  - Retention: Unlimited (can add partitioning/archiving later)
-  - Query: Filter by agent, task, level, time range
+All technical unknowns have been resolved. The migration path is clear:
 
-**Real-time Monitoring**:
-- **Streamlit UI**: Polls orchestrator every 2 seconds
-  - GET /tasks/{id}: Task status, subtask progress, agent assignments
-  - GET /agents: All agent statuses (availability, CPU, memory, task count)
-  - Displays: Progress bar, subtask list with status, agent health dashboard
+1. ✅ **Authentication architecture**: Hybrid pattern with automatic detection
+2. ✅ **SDK integration**: ClaudeSDKClient with AsyncAnthropic fallback
+3. ✅ **Environment detection**: CLAUDECODE environment variable
+4. ✅ **API key handling**: Temporary suppression pattern
+5. ✅ **Configuration**: Extended Settings class
+6. ✅ **Testing**: Three-tier pyramid with specific auth tests
+7. ✅ **Migration**: Incremental with backward compatibility
+8. ✅ **Error handling**: Comprehensive with retry logic
+9. ✅ **Performance**: Connection reuse and streaming
 
-**Agent Health**:
-- **Heartbeat**: Every 10 seconds, agent updates Redis `agent:{id}` with:
-  - is_available, current_task, cpu_usage (via psutil), memory_usage (via psutil), tasks_completed
-  - TTL set to 60 seconds (agent considered dead if no heartbeat)
-- **Detection**: Orchestrator queries Redis for active agents
-  - Missing agents (TTL expired) removed from available pool
-  - Tasks assigned to dead agents can be detected and reassigned (future enhancement)
-
-**Metrics** (logged in database):
-- Task submission time → completion time (end-to-end latency)
-- Subtask execution time (per agent, stored in subtask_results.execution_time)
-- Queue lengths (agent_tasks, agent_results)
-- Agent utilization (% time busy vs idle)
-- Error rate (failed subtasks / total subtasks)
-
-**Future Enhancements**:
-- Export metrics to Prometheus
-- Grafana dashboards
-- Alerting on agent failures
-- Performance regression detection
+**No NEEDS CLARIFICATION remain**. Ready for Phase 1 (Design & Contracts).
 
 ---
 
-## Summary
-
-All technical decisions are documented with clear rationale and alternatives considered. No NEEDS CLARIFICATION items remain. System is ready for Phase 1 design.
+**References**:
+- `CLAUDE_TOKEN_SDK_GUIDE.md`: Comprehensive guide covering all authentication methods
+- Existing codebase: `orchestrator/task_analyzer.py`, `agent/agent_service.py`
+- Constitution: Testing Standards (TDD), Code Quality (maintainability)

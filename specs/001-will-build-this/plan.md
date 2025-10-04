@@ -1,438 +1,233 @@
-# Implementation Plan: Multi-Agent Task Execution System
+
+# Implementation Plan: Claude Token SDK Migration
 
 **Branch**: `001-will-build-this` | **Date**: 2025-10-04 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `D:\CodebyAI\Duy_MultiAgents_ClaudeCode\MultiAgents_ClaudeCode\specs\001-will-build-this\spec.md`
 
 ## Execution Flow (/plan command scope)
 ```
-1. Load feature spec from Input path → ✓ LOADED
-2. Fill Technical Context (scan for NEEDS CLARIFICATION) → ✓ COMPLETE
-   → Detected Project Type: web (orchestrator + agents + UI)
-   → Structure Decision: Multi-service architecture
-3. Fill Constitution Check section → ✓ COMPLETE
-4. Evaluate Constitution Check section
-   → No violations detected
-   → Update Progress Tracking: Initial Constitution Check → PASS
-5. Execute Phase 0 → research.md → IN PROGRESS
-6. Execute Phase 1 → contracts, data-model.md, quickstart.md, CLAUDE.md
+1. Load feature spec from Input path
+   → If not found: ERROR "No feature spec at {path}"
+2. Fill Technical Context (scan for NEEDS CLARIFICATION)
+   → Detect Project Type from file system structure or context (web=frontend+backend, mobile=app+api)
+   → Set Structure Decision based on project type
+3. Fill the Constitution Check section based on the content of the constitution document.
+4. Evaluate Constitution Check section below
+   → If violations exist: Document in Complexity Tracking
+   → If no justification possible: ERROR "Simplify approach first"
+   → Update Progress Tracking: Initial Constitution Check
+5. Execute Phase 0 → research.md
+   → If NEEDS CLARIFICATION remain: ERROR "Resolve unknowns"
+6. Execute Phase 1 → contracts, data-model.md, quickstart.md, agent-specific template file (e.g., `CLAUDE.md` for Claude Code, `.github/copilot-instructions.md` for GitHub Copilot, `GEMINI.md` for Gemini CLI, `QWEN.md` for Qwen Code, or `AGENTS.md` for all other agents).
 7. Re-evaluate Constitution Check section
-8. Plan Phase 2 → Describe task generation approach
+   → If new violations: Refactor design, return to Phase 1
+   → Update Progress Tracking: Post-Design Constitution Check
+8. Plan Phase 2 → Describe task generation approach (DO NOT create tasks.md)
 9. STOP - Ready for /tasks command
 ```
 
-**IMPORTANT**: The /plan command STOPS at step 9. Phases 2-4 are executed by other commands:
+**IMPORTANT**: The /plan command STOPS at step 7. Phases 2-4 are executed by other commands:
 - Phase 2: /tasks command creates tasks.md
 - Phase 3-4: Implementation execution (manual or via tools)
 
 ## Summary
 
-Build a distributed multi-agent task execution system where users submit complex tasks via a web interface, which are automatically decomposed into subtasks and executed in parallel by 5 specialized Claude agents (powered by the official Claude Agent SDK). The system coordinates execution through a central orchestrator using shared resources (PostgreSQL for persistence, Redis for queuing, shared file storage), provides real-time monitoring via Streamlit dashboard, and aggregates results when all subtasks complete.
+**Primary Requirement**: Migrate the Multi-Agent Task Execution System from Anthropic API key authentication to Claude Code integrated authentication using claude.ai tokens.
 
-**Technical Approach**: Microservices architecture with FastAPI orchestrator, 5 independent agent services using Claude Agent SDK with MCP servers for tool integration, PostgreSQL for task/result storage, Redis for message queuing and agent coordination, Streamlit for user interface, and containerized deployment via Docker Compose.
+**Technical Approach**: Replace direct `anthropic.Anthropic()` client usage with `ClaudeSDKClient` from `claude_code_sdk`. Implement hybrid authentication that detects Claude Code environment (`CLAUDECODE=1`) and automatically uses integrated authentication, while maintaining fallback to API key for development scenarios. This migration will eliminate API credit costs, provide seamless integration with Claude Code features, and ensure automatic token management.
 
 ## Technical Context
 **Language/Version**: Python 3.11+
-**Primary Dependencies**: FastAPI 0.104+, Claude Agent SDK 1.0+, Streamlit 1.28+, asyncpg, redis[asyncio], anthropic 0.7.7, httpx, psutil
-**Storage**: PostgreSQL 15 (tasks, subtask_results, agent_logs tables)
-**Testing**: pytest with pytest-asyncio for async tests, httpx for API testing, contract tests via OpenAPI validation
-**Target Platform**: Docker containers on Linux (orchestrator, 5 agents, Streamlit UI, PostgreSQL, Redis)
-**Project Type**: web (multi-service)
-**Performance Goals**: <200ms API latency p95, parallel subtask execution, <1s task submission response, real-time UI updates every 2s
-**Constraints**: <200ms orchestrator endpoints, <2GB memory per agent, 80% test coverage, TDD workflow, agent heartbeat every 10s
-**Scale/Scope**: 5 concurrent agents, support 10+ parallel tasks, handle 100+ subtasks per task, 10k+ tasks in database
+**Primary Dependencies**:
+- `claude-code-sdk` (Claude Code SDK for integrated authentication)
+- `anthropic` (fallback for direct API)
+- `asyncpg` (PostgreSQL async driver)
+- `redis` (queue and coordination)
+- `FastAPI` (orchestrator and agent services)
+- `streamlit` (UI)
+- `pydantic` (data validation)
+- `pydantic-settings` (environment configuration)
+
+**Storage**: PostgreSQL (tasks, results, logs) + Redis (queues, agent status)
+**Testing**: pytest with pytest-asyncio for async code
+**Target Platform**: Windows/Linux servers (multi-process architecture)
+**Project Type**: Distributed system (orchestrator + 5 agents + UI)
+**Performance Goals**: Same as original (agent task execution <30s, API <200ms p95)
+**Constraints**:
+- Must maintain backward compatibility with existing database schema
+- Must work in both Claude Code environment and standalone mode
+- Must not require manual token management
+- Must eliminate API credit costs when running in Claude Code
+
+**Scale/Scope**:
+- 1 orchestrator service
+- 5 agent services (requires updating 2 files each)
+- 2 shared components (task_analyzer.py in orchestrator, agent_service.py in agent)
+- Total: ~10 code files to modify
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 ### Code Quality (NON-NEGOTIABLE)
-- ✅ **PASS**: Code will follow camelCase for variables/functions, PascalCase for classes
-- ✅ **PASS**: Functions will be single-purpose with descriptive names
-- ✅ **PASS**: Max 50 lines per function (excluding tests)
-- ✅ **PASS**: Max cyclomatic complexity 10
-- ✅ **PASS**: No dead code, no magic numbers, DRY principle enforced
+- ✅ **PASS**: Migration maintains existing naming conventions and module structure
+- ✅ **PASS**: Changes isolated to authentication layer (task_analyzer.py, agent_service.py)
+- ✅ **PASS**: Single-purpose wrapper classes for authentication (HybridClaudeClient pattern)
+- ✅ **PASS**: No magic numbers (environment variables used for configuration)
 
 ### Testing Standards (NON-NEGOTIABLE)
-- ✅ **PASS**: TDD workflow: Tests → User approval → Fail → Implement → Pass → Refactor
-- ✅ **PASS**: 80% minimum coverage for all new code
-- ✅ **PASS**: Test pyramid: 70% unit, 20% integration, 10% contract
-- ✅ **PASS**: Each test verifies one behavior, deterministic execution
-- ✅ **PASS**: Tests run <5s (unit), <30s (integration)
-- ✅ **PASS**: Coverage: happy path, errors, boundaries, edges, performance
+- ✅ **PASS**: TDD workflow will be followed (write authentication tests first)
+- ✅ **PASS**: Target 80%+ coverage for modified authentication modules
+- ✅ **PASS**: Test pyramid: Unit tests (authentication methods), Integration tests (end-to-end task execution), Contract tests (Claude SDK responses)
+- ✅ **PASS**: Tests will cover: Claude Code environment detection, API key fallback, token validation, error handling
 
-### UX Consistency
-- ✅ **PASS**: Streamlit UI provides intuitive web interface
-- ✅ **PASS**: Clear error messages with actionable guidance
-- ✅ **PASS**: Progress indicators for long operations (>2s)
-- ✅ **PASS**: Real-time feedback on task status
-- ✅ **PASS**: Quickstart guide enables success within 5 minutes
+### User Experience Consistency
+- ✅ **PASS**: No changes to CLI/UI interfaces (internal authentication only)
+- ✅ **PASS**: Error messages will include actionable guidance (e.g., "Set CLAUDECODE=1 or provide ANTHROPIC_API_KEY")
+- ✅ **PASS**: Existing environment variable handling preserved
+- ✅ **PASS**: No breaking changes to .env configuration
 
 ### Performance Requirements
-- ✅ **PASS**: API endpoints <200ms p95 latency (orchestrator POST /tasks, GET /tasks/{id})
-- ✅ **PASS**: UI updates <100ms feedback
-- ✅ **PASS**: Memory <500MB baseline, <2GB peak per service
-- ✅ **PASS**: Handle 10x expected load (50 concurrent tasks)
-- ✅ **PASS**: Connection pooling (PostgreSQL pool size 2-20, Redis connection reuse)
-- ✅ **PASS**: Benchmark tests for task submission, agent assignment, result aggregation
+- ✅ **PASS**: Response times unchanged (same Claude models used)
+- ✅ **PASS**: Connection reuse pattern from guide eliminates overhead
+- ✅ **PASS**: No memory impact (SDK handles connection pooling)
+- ✅ **PASS**: Performance tests will verify no regressions
 
-### Quality Gates
-- ✅ **PASS**: All tests passing before merge
-- ✅ **PASS**: 80% coverage enforced
-- ✅ **PASS**: Linting (flake8/black), type checking (mypy optional)
-- ✅ **PASS**: Code review with constitutional compliance check
-- ✅ **PASS**: Performance benchmarks documented
-
-**Initial Assessment**: No constitutional violations. System design aligns with all principles.
+**Gate Result**: ✅ **ALL GATES PASS** - No constitutional violations detected. Proceed to Phase 0.
 
 ## Project Structure
 
 ### Documentation (this feature)
 ```
-specs/001-will-build-this/
-├── spec.md              # Feature specification
+specs/[###-feature]/
 ├── plan.md              # This file (/plan command output)
 ├── research.md          # Phase 0 output (/plan command)
 ├── data-model.md        # Phase 1 output (/plan command)
 ├── quickstart.md        # Phase 1 output (/plan command)
 ├── contracts/           # Phase 1 output (/plan command)
-│   ├── orchestrator-api.yaml  # OpenAPI spec for orchestrator
-│   ├── agent-api.yaml         # OpenAPI spec for agent endpoints
-│   └── task-schema.json       # JSON schema for Task/SubTask models
 └── tasks.md             # Phase 2 output (/tasks command - NOT created by /plan)
 ```
 
 ### Source Code (repository root)
 ```
-shared/                          # Shared components across services
-├── __init__.py
-├── models.py                    # Pydantic models (Task, SubTask, Agent, etc.)
-├── config.py                    # Settings and configuration
-├── database.py                  # PostgreSQL manager
-└── redis_manager.py             # Redis operations
+orchestrator/
+├── task_analyzer.py        # [MODIFY] Replace AsyncAnthropic with HybridClaudeClient
+└── orchestrator.py          # [NO CHANGE] Uses task_analyzer
 
-orchestrator/                    # Central orchestrator service
-├── __init__.py
-├── orchestrator.py              # FastAPI app, background workers
-└── task_analyzer.py             # Task decomposition using Claude API
+agent/
+├── agent_service.py         # [MODIFY] Replace AsyncAnthropic with HybridClaudeClient
+└── __init__.py              # [NO CHANGE]
 
-agent/                           # Agent service (5 instances)
-├── __init__.py
-└── agent_service.py             # FastAPI app with Claude Agent SDK
+shared/
+├── models.py                # [NO CHANGE] Data models
+├── config.py                # [MODIFY] Add CLAUDECODE env var
+├── database.py              # [NO CHANGE] Database manager
+└── redis_manager.py         # [NO CHANGE] Redis operations
 
-ui/                              # User interface
-└── streamlit_app.py             # Streamlit dashboard
-
-shared_files/                    # Shared workspace for agents
-└── {task_id}/                   # Per-task directories
-    ├── context/                 # Context files
-    ├── output/                  # Agent outputs
-    └── temp/                    # Temporary files
+ui/
+└── streamlit_app.py         # [NO CHANGE] UI layer
 
 tests/
-├── contract/                    # Contract tests (10% of tests)
-│   ├── test_orchestrator_api.py
-│   ├── test_agent_api.py
-│   └── test_task_schemas.py
-├── integration/                 # Integration tests (20% of tests)
-│   ├── test_end_to_end.py
-│   ├── test_task_lifecycle.py
-│   └── test_agent_coordination.py
-└── unit/                        # Unit tests (70% of tests)
-    ├── test_models.py
-    ├── test_database.py
-    ├── test_redis_manager.py
-    ├── test_task_analyzer.py
-    └── test_agent_service.py
+├── unit/
+│   ├── test_auth_detection.py          # [NEW] Test environment detection
+│   ├── test_hybrid_client.py           # [NEW] Test authentication methods
+│   └── test_token_fallback.py          # [NEW] Test API key fallback
+├── integration/
+│   ├── test_task_execution_token.py    # [NEW] End-to-end with token auth
+│   └── test_agent_coordination_token.py # [NEW] Multi-agent with token auth
+└── contract/
+    └── test_claude_sdk_contract.py     # [NEW] Validate SDK response format
 
-scripts/                         # Utility scripts
-├── start.sh                     # Start all services
-├── stop.sh                      # Stop all services
-└── test_system.py               # System tests
-
-docker-compose.yml               # Docker Compose configuration
-Dockerfile.orchestrator          # Orchestrator image
-Dockerfile.agent                 # Agent image
-Dockerfile.streamlit             # Streamlit UI image
-requirements.txt                 # Python dependencies
-.env.example                     # Environment template
-.env                            # Environment variables (gitignored)
-.gitignore
-README.md
+.env                         # [MODIFY] Add CLAUDECODE=1
+requirements.txt             # [MODIFY] Add claude-code-sdk
 ```
 
-**Structure Decision**: Web application architecture with multiple services (orchestrator, 5 agents, UI) coordinating via shared resources. Each service is independently deployable as a Docker container. Shared code in `shared/` directory, service-specific code in dedicated directories, comprehensive test coverage in `tests/` with contract/integration/unit split per testing pyramid.
+**Structure Decision**: Distributed system with single project layout. Existing module structure preserved. Authentication changes isolated to 2 core files (task_analyzer.py, agent_service.py) with new shared authentication utility. Tests organized by type following TDD pyramid.
 
-## Phase 0: Outline & Research
+## Phase 0: Outline & Research ✅ COMPLETE
 
-**No NEEDS CLARIFICATION items detected** - specification files provide comprehensive technical details.
+**Research completed**: All technical decisions documented in `research.md`
 
-### Research Topics
+**Key decisions made**:
+1. **Authentication Architecture**: Hybrid pattern with automatic Claude Code detection
+2. **SDK Integration**: ClaudeSDKClient with AsyncAnthropic fallback
+3. **Environment Detection**: CLAUDECODE=1 environment variable
+4. **API Key Handling**: Temporary suppression during Claude Code execution
+5. **Configuration**: Extended Settings class with new Claude Code fields
+6. **Testing**: Three-tier pyramid (unit/integration/contract) with auth-specific tests
+7. **Migration Path**: 5-phase incremental migration with backward compatibility
+8. **Error Handling**: Comprehensive with retry logic and actionable messages
+9. **Performance**: Connection reuse and response streaming patterns
 
-1. **Claude Agent SDK Integration**
-   - Decision: Use official Claude Agent SDK for agent implementation
-   - Rationale: Provides native tool integration, MCP servers, file operations, subagent delegation, checkpoints
-   - Key features: ClaudeSDKClient, ClaudeAgentOptions, MCP server creation, permission modes
-
-2. **Task Decomposition Strategy**
-   - Decision: Use Claude API (Anthropic client) for analyzing and decomposing tasks
-   - Rationale: Leverages Claude's reasoning to break complex tasks into subtasks with dependencies
-   - Approach: Prompt engineering to extract subtask descriptions, capabilities, dependencies, priorities
-
-3. **Message Queue Architecture**
-   - Decision: Redis with LIST data structure (BLPOP/RPUSH) for task and result queues
-   - Rationale: Atomic operations, blocking dequeue, simple pub/sub, supports distributed coordination
-   - Queues: `agent_tasks` (pending subtasks), `agent_results` (completed subtask results)
-
-4. **Agent Capability Matching**
-   - Decision: Enum-based capabilities (DATA_ANALYSIS, WEB_SCRAPING, CODE_GENERATION, FILE_PROCESSING, DATABASE_OPERATIONS, API_INTEGRATION)
-   - Rationale: Static assignment enables predictable routing, agents register capabilities in Redis
-   - Matching: Dispatcher finds first available agent with required capability
-
-5. **Shared State Management**
-   - Decision: Combination of PostgreSQL (persistent state), Redis (ephemeral state), file storage (large data)
-   - Rationale: PostgreSQL for audit trail and historical data, Redis for real-time coordination, files for outputs
-   - Patterns: Task status in DB, agent availability in Redis, subtask results in both
-
-6. **Error Handling and Retry**
-   - Decision: Mark failures in database, block dependent subtasks, support manual retry
-   - Rationale: Explicit failure tracking prevents cascading errors, preserves audit trail
-   - No auto-retry: Requires user intervention to prevent infinite loops
-
-7. **Performance Optimization**
-   - Decision: PostgreSQL connection pooling (2-20 connections), Redis connection reuse, async/await throughout
-   - Rationale: Minimize connection overhead, maximize concurrency with asyncio
-   - Indexes: task status, user_id, created_at, subtask_id for fast queries
-
-8. **Monitoring and Observability**
-   - Decision: PostgreSQL agent_logs table, Streamlit real-time polling, agent heartbeat via Redis
-   - Rationale: Centralized logging, simple UI refresh, TTL-based agent health detection
-   - Metrics: CPU/memory via psutil, execution time per subtask, queue lengths
-
-**Output**: research.md created
-
----
+**Output**: ✅ research.md created with 9 research sections, all NEEDS CLARIFICATION resolved
 
 ## Phase 1: Design & Contracts
 *Prerequisites: research.md complete*
 
-### Entity Extraction → data-model.md
+1. **Extract entities from feature spec** → `data-model.md`:
+   - Entity name, fields, relationships
+   - Validation rules from requirements
+   - State transitions if applicable
 
-**Entities Identified** (from feature spec):
-1. Task - User-submitted work request
-2. SubTask - Individual unit of work
-3. Agent - Independent execution unit
-4. SubTaskResult - Output from subtask execution
-5. AgentCapability - Agent specialization enum
-6. TaskQueue - Ordered collection of pending subtasks
-7. SharedState - Key-value storage for coordination
+2. **Generate API contracts** from functional requirements:
+   - For each user action → endpoint
+   - Use standard REST/GraphQL patterns
+   - Output OpenAPI/GraphQL schema to `/contracts/`
 
-**Data Model Created**:
-- Entity definitions with fields, validation rules, state transitions
-- Relationship diagrams (Task 1:N SubTask, SubTask N:N SubTask dependencies)
-- PostgreSQL schema with indexes
-- Redis data structures
-- Pydantic model code references
+3. **Generate contract tests** from contracts:
+   - One test file per endpoint
+   - Assert request/response schemas
+   - Tests must fail (no implementation yet)
 
-**Output**: `data-model.md` created
+4. **Extract test scenarios** from user stories:
+   - Each story → integration test scenario
+   - Quickstart test = story validation steps
 
----
+5. **Update agent file incrementally** (O(1) operation):
+   - Run `.specify/scripts/powershell/update-agent-context.ps1 -AgentType claude`
+     **IMPORTANT**: Execute it exactly as specified above. Do not add or remove any arguments.
+   - If exists: Add only NEW tech from current plan
+   - Preserve manual additions between markers
+   - Update recent changes (keep last 3)
+   - Keep under 150 lines for token efficiency
+   - Output to repository root
 
-### API Contracts → contracts/
-
-**Orchestrator API Endpoints**:
-- POST /tasks - Create and submit task
-- GET /tasks/{task_id} - Get task status and results
-- GET /agents - Get all registered agents
-- GET /agents/available - Get available agents by capability
-
-**Agent API Endpoints**:
-- GET /health - Health check
-- GET /status - Detailed agent status
-- POST /execute - Execute subtask
-
-**Outputs**:
-- `contracts/orchestrator-api.yaml` - OpenAPI 3.0 spec
-- `contracts/agent-api.yaml` - OpenAPI 3.0 spec
-
----
-
-### Test Scenarios → quickstart.md
-
-**Quickstart Guide Created**:
-1. **Step 1**: Clone and setup environment (1 min)
-2. **Step 2**: Start all services via Docker Compose (2 min)
-3. **Step 3**: Submit simple task via UI or API (30 sec)
-4. **Step 4**: Monitor execution in real-time (1 min)
-5. **Step 5**: Try complex multi-step task (1 min)
-
-**Validation Scenarios**:
-- All 5 agents registered and available
-- Simple task completes successfully
-- Complex task decomposes into multiple subtasks
-- Results aggregated correctly
-- UI shows real-time updates
-
-**Time to first success**: < 5 minutes ✓
-
-**Output**: `quickstart.md` created
-
----
-
-### Agent Context Update → CLAUDE.md
-
-**Script Executed**: `.specify/scripts/powershell/update-agent-context.ps1 -AgentType claude`
-
-**Context Added**:
-- Language: Python 3.11+
-- Framework: FastAPI 0.104+, Claude Agent SDK 1.0+, Streamlit 1.28+
-- Database: PostgreSQL 15
-- Project Type: web (multi-service)
-
-**Output**: `CLAUDE.md` updated at repository root
-
----
-
-## Phase 1 Completion: Re-evaluate Constitution Check
-
-### Code Quality (NON-NEGOTIABLE)
-- ✅ **PASS**: Design maintains single-purpose components (orchestrator, agent, UI)
-- ✅ **PASS**: Clear naming in data model and API contracts
-- ✅ **PASS**: Function complexity manageable (background workers, API handlers)
-
-### Testing Standards (NON-NEGOTIABLE)
-- ✅ **PASS**: Contract tests defined in quickstart (validate API schemas)
-- ✅ **PASS**: Integration tests planned (end-to-end task lifecycle)
-- ✅ **PASS**: Unit tests scoped to shared modules (models, database, redis)
-- ✅ **PASS**: Test pyramid maintained (70% unit, 20% integration, 10% contract)
-
-### UX Consistency
-- ✅ **PASS**: Streamlit UI provides intuitive interface
-- ✅ **PASS**: API error responses include actionable detail
-- ✅ **PASS**: Quickstart guide enables 5-minute success
-- ✅ **PASS**: Real-time feedback via polling (every 2s)
-
-### Performance Requirements
-- ✅ **PASS**: PostgreSQL indexes on all query patterns
-- ✅ **PASS**: Connection pooling configured (2-20 connections)
-- ✅ **PASS**: Async/await throughout for concurrency
-- ✅ **PASS**: Redis TTL for agent heartbeat (60s expiration)
-- ✅ **PASS**: File-based storage for large results (no DB bloat)
-
-**Post-Design Assessment**: No new constitutional violations. Design passes all quality gates.
-
----
+**Output**: data-model.md, /contracts/*, failing tests, quickstart.md, agent-specific file
 
 ## Phase 2: Task Planning Approach
 *This section describes what the /tasks command will do - DO NOT execute during /plan*
 
 **Task Generation Strategy**:
-
-1. **Load Base Template**:
-   - Read `.specify/templates/tasks-template.md`
-   - Extract task structure and numbering scheme
-
-2. **Generate from Contracts** (10% - Contract Tests):
-   - `contracts/orchestrator-api.yaml` → 3 contract test tasks
-     - T001 [P] Contract test POST /tasks
-     - T002 [P] Contract test GET /tasks/{id}
-     - T003 [P] Contract test GET /agents
-   - `contracts/agent-api.yaml` → 2 contract test tasks
-     - T004 [P] Contract test GET /health
-     - T005 [P] Contract test POST /execute
-
-3. **Generate from Data Model** (20% - Integration Tests):
-   - Task lifecycle → 1 integration test
-     - T006 Integration test: Create task → Decompose → Execute → Aggregate
-   - Agent coordination → 1 integration test
-     - T007 Integration test: Multiple agents executing parallel subtasks
-   - Error handling → 1 integration test
-     - T008 Integration test: Failed subtask blocks dependents
-
-4. **Generate from Entities** (30% - Unit Tests & Models):
-   - Task, SubTask, Agent, SubTaskResult models → 1 unit test task
-     - T009 [P] Unit tests for Pydantic models (validation, serialization)
-   - DatabaseManager → 1 unit test task
-     - T010 [P] Unit tests for database operations (CRUD, queries)
-   - RedisManager → 1 unit test task
-     - T011 [P] Unit tests for Redis operations (queues, hashes, locks)
-   - TaskAnalyzer → 1 unit test task
-     - T012 [P] Unit tests for task decomposition logic
-
-5. **Generate Implementation Tasks** (40% - Core Features):
-   - **Setup Phase** (3 tasks):
-     - T013 Create project structure (directories, __init__.py files)
-     - T014 Create requirements.txt with all dependencies
-     - T015 [P] Create docker-compose.yml and Dockerfiles
-
-   - **Shared Components** (3 tasks):
-     - T016 Implement shared/models.py (Pydantic models)
-     - T017 Implement shared/config.py (Settings class)
-     - T018 Implement shared/database.py (DatabaseManager with pool)
-     - T019 Implement shared/redis_manager.py (RedisManager with queues)
-
-   - **Orchestrator Service** (4 tasks):
-     - T020 Implement orchestrator/task_analyzer.py (Claude API decomposition)
-     - T021 Implement orchestrator/orchestrator.py (FastAPI app)
-     - T022 Implement background worker: dispatch_tasks()
-     - T023 Implement background worker: process_results()
-
-   - **Agent Service** (2 tasks):
-     - T024 Implement agent/agent_service.py (Claude SDK integration)
-     - T025 Implement MCP server tools (database, embedding, shared state)
-
-   - **Streamlit UI** (1 task):
-     - T026 Implement ui/streamlit_app.py (dashboard, task submission, monitoring)
-
-   - **Utility Scripts** (1 task):
-     - T027 [P] Implement scripts/start.sh, stop.sh, test_system.py
+- Load `.specify/templates/tasks-template.md` as base
+- Generate tasks from Phase 1 design docs (contracts, data model, quickstart)
+- Each contract → contract test task [P]
+- Each entity → model creation task [P] 
+- Each user story → integration test task
+- Implementation tasks to make tests pass
 
 **Ordering Strategy**:
+- TDD order: Tests before implementation 
+- Dependency order: Models before services before UI
+- Mark [P] for parallel execution (independent files)
 
-1. **TDD Order**: Tests before implementation
-   - Contract tests (T001-T005) MUST be written first
-   - Integration tests (T006-T008) MUST fail initially
-   - Unit tests (T009-T012) MUST be written before each component
-   - Implementation tasks only after corresponding tests exist
-
-2. **Dependency Order**:
-   - Setup (T013-T015) blocks everything else
-   - Shared components (T016-T019) block orchestrator and agents
-   - Models (T016) blocks database (T018) and all services
-   - Orchestrator (T020-T023) and Agents (T024-T025) can be parallel
-   - UI (T026) requires orchestrator running
-
-3. **Parallelization** ([P] marker):
-   - Contract tests are independent ([P] on all)
-   - Unit tests for different modules are independent ([P])
-   - Docker files can be written in parallel ([P])
-   - Scripts can be written in parallel ([P])
-
-**Estimated Output**: 27 numbered tasks in `tasks.md`
-
-**Task Format**:
-```
-- [ ] T001 [P] Contract test POST /tasks in tests/contract/test_orchestrator_api.py
-      Validate request schema, response codes, response body structure
-```
+**Estimated Output**: 25-30 numbered, ordered tasks in tasks.md
 
 **IMPORTANT**: This phase is executed by the /tasks command, NOT by /plan
-
----
 
 ## Phase 3+: Future Implementation
 *These phases are beyond the scope of the /plan command*
 
-**Phase 3**: Task execution (/tasks command creates tasks.md)
-**Phase 4**: Implementation (execute tasks following TDD workflow)
-**Phase 5**: Validation (run full test suite, execute quickstart.md, performance benchmarks)
-
----
+**Phase 3**: Task execution (/tasks command creates tasks.md)  
+**Phase 4**: Implementation (execute tasks.md following constitutional principles)  
+**Phase 5**: Validation (run tests, execute quickstart.md, performance validation)
 
 ## Complexity Tracking
 *Fill ONLY if Constitution Check has violations that must be justified*
 
-No violations detected. This section is empty.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
 
----
 
 ## Progress Tracking
 *This checklist is updated during execution flow*
@@ -440,7 +235,7 @@ No violations detected. This section is empty.
 **Phase Status**:
 - [x] Phase 0: Research complete (/plan command)
 - [x] Phase 1: Design complete (/plan command)
-- [x] Phase 2: Task planning complete (/plan command - describe approach only)
+- [ ] Phase 2: Task planning complete (/plan command - describe approach only)
 - [ ] Phase 3: Tasks generated (/tasks command)
 - [ ] Phase 4: Implementation complete
 - [ ] Phase 5: Validation passed
@@ -448,26 +243,8 @@ No violations detected. This section is empty.
 **Gate Status**:
 - [x] Initial Constitution Check: PASS
 - [x] Post-Design Constitution Check: PASS
-- [x] All NEEDS CLARIFICATION resolved (none existed)
+- [x] All NEEDS CLARIFICATION resolved
 - [x] Complexity deviations documented (none required)
 
-**Artifacts Generated**:
-- [x] specs/001-will-build-this/plan.md (this file)
-- [x] specs/001-will-build-this/research.md
-- [x] specs/001-will-build-this/data-model.md
-- [x] specs/001-will-build-this/quickstart.md
-- [x] specs/001-will-build-this/contracts/orchestrator-api.yaml
-- [x] specs/001-will-build-this/contracts/agent-api.yaml
-- [x] CLAUDE.md (repository root)
-
 ---
-
-## Summary
-
-**Planning Complete**: All design artifacts generated, no constitutional violations, ready for task generation via `/tasks` command.
-
-**Next Step**: Run `/tasks` to generate the ordered, testable task list in `tasks.md`.
-
----
-
-*Based on Constitution v1.0.0 - See `.specify/memory/constitution.md`*
+*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
