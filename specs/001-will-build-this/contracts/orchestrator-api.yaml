@@ -1,0 +1,274 @@
+openapi: 3.0.3
+info:
+  title: Multi-Agent Orchestrator API
+  description: Central coordinator for task decomposition, agent assignment, and result aggregation
+  version: 1.0.0
+  contact:
+    name: Multi-Agent System
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /tasks:
+    post:
+      summary: Create and submit a new task
+      description: Accepts natural language task description, decomposes into subtasks, and queues for execution
+      operationId: createTask
+      parameters:
+        - name: description
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 10
+            maxLength: 5000
+          description: Natural language description of task to execute
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "default_user"
+          description: Identifier of user submitting task
+      responses:
+        '200':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    example: "task_abc123def456"
+                  status:
+                    type: string
+                    enum: [created]
+                  subtasks_count:
+                    type: integer
+                    example: 4
+                  initial_subtasks_queued:
+                    type: integer
+                    example: 2
+        '400':
+          description: Invalid request (description too short/long)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error during task decomposition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}:
+    get:
+      summary: Get task status and results
+      description: Retrieves current task status, subtask progress, and results if completed
+      operationId: getTaskStatus
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique task identifier
+      responses:
+        '200':
+          description: Task details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+                  subtask_results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SubTaskResult'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /agents:
+    get:
+      summary: Get all registered agents
+      description: Returns status of all agents currently registered in the system
+      operationId: getAllAgents
+      responses:
+        '200':
+          description: Agent list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentStatus'
+
+  /agents/available:
+    get:
+      summary: Get available agents
+      description: Returns agents that are currently available to accept new tasks, optionally filtered by capability
+      operationId: getAvailableAgents
+      parameters:
+        - name: capability
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [data_analysis, web_scraping, code_generation, file_processing, database_operations, api_integration]
+          description: Filter by required capability
+      responses:
+        '200':
+          description: Available agents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available_agents:
+                    type: array
+                    items:
+                      type: string
+                    example: ["agent_1", "agent_3", "agent_5"]
+                  count:
+                    type: integer
+                    example: 3
+
+components:
+  schemas:
+    Task:
+      type: object
+      required:
+        - id
+        - user_id
+        - description
+        - created_at
+        - updated_at
+        - status
+      properties:
+        id:
+          type: string
+          example: "task_abc123def456"
+        user_id:
+          type: string
+          example: "user_001"
+        description:
+          type: string
+          example: "Analyze sales data and generate report"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, in_progress, completed, failed, cancelled]
+        subtasks:
+          type: string
+          description: "JSON array of SubTask objects (stored as JSONB in database)"
+        result:
+          type: object
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    SubTaskResult:
+      type: object
+      required:
+        - task_id
+        - subtask_id
+        - agent_id
+        - status
+        - execution_time
+        - created_at
+      properties:
+        task_id:
+          type: string
+        subtask_id:
+          type: string
+        agent_id:
+          type: string
+        status:
+          type: string
+          enum: [completed, failed]
+        output:
+          type: object
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        execution_time:
+          type: number
+          format: float
+          example: 12.5
+        created_at:
+          type: string
+          format: date-time
+
+    AgentStatus:
+      type: object
+      required:
+        - agent_id
+        - port
+        - is_available
+        - capabilities
+        - cpu_usage
+        - memory_usage
+        - tasks_completed
+        - last_heartbeat
+      properties:
+        agent_id:
+          type: string
+          example: "agent_1"
+        port:
+          type: integer
+          example: 8001
+        is_available:
+          type: boolean
+        current_task:
+          type: string
+          nullable: true
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [data_analysis, web_scraping, code_generation, file_processing, database_operations, api_integration]
+          example: ["data_analysis", "code_generation"]
+        cpu_usage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        memory_usage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        tasks_completed:
+          type: integer
+          minimum: 0
+        last_heartbeat:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          example: "Task not found"
