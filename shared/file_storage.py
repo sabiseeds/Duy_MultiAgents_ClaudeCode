@@ -15,7 +15,7 @@ from shared.models import FileAttachment
 class FileStorageManager:
     """Manages file uploads for tasks"""
 
-    UPLOADS_BASE_DIR = Path("uploads")
+    UPLOADS_BASE_DIR = Path("artifacts/uploads")
     ALLOWED_EXTENSIONS = {
         # Images
         '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg',

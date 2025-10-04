@@ -93,32 +93,29 @@ def reset_file_storage():
     """Delete all uploaded files and results"""
     print("\n[3/3] Cleaning File Storage...")
 
-    uploads_dir = Path("uploads")
-    results_dir = Path("results")
+    artifacts_dir = Path("artifacts")
 
-    deleted_count = 0
-
-    # Delete uploads folder
-    if uploads_dir.exists():
+    # Delete entire artifacts folder
+    if artifacts_dir.exists():
         try:
-            shutil.rmtree(uploads_dir)
-            print(f"  [OK] Deleted uploads/ directory")
-            deleted_count += 1
-        except Exception as e:
-            print(f"  [ERROR] Error deleting uploads/: {e}")
-    else:
-        print(f"  [INFO] No uploads/ directory found")
+            shutil.rmtree(artifacts_dir)
+            print(f"  [OK] Deleted artifacts/ directory")
 
-    # Delete results folder
-    if results_dir.exists():
-        try:
-            shutil.rmtree(results_dir)
-            print(f"  [OK] Deleted results/ directory")
-            deleted_count += 1
+            # Recreate structure
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "results").mkdir(exist_ok=True)
+            (artifacts_dir / "uploads").mkdir(exist_ok=True)
+            (artifacts_dir / "reports").mkdir(exist_ok=True)
+            (artifacts_dir / "data").mkdir(exist_ok=True)
+            (artifacts_dir / "images").mkdir(exist_ok=True)
+            (artifacts_dir / "temp").mkdir(exist_ok=True)
+            print(f"  [OK] Recreated artifacts/ structure")
+
         except Exception as e:
-            print(f"  [ERROR] Error deleting results/: {e}")
+            print(f"  [ERROR] Error cleaning artifacts/: {e}")
+            return False
     else:
-        print(f"  [INFO] No results/ directory found")
+        print(f"  [INFO] No artifacts/ directory found")
 
     return True
 

@@ -364,7 +364,7 @@ def show_results_browser():
     """Browse and view saved HTML result files"""
     st.header("📁 Results Files Browser")
 
-    results_dir = "results"
+    results_dir = "artifacts/results"
 
     if not os.path.exists(results_dir):
         st.warning("No results directory found. Results will appear here after agents complete tasks.")

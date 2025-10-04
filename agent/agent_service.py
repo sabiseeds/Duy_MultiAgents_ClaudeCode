@@ -19,6 +19,7 @@ from shared.models import (
 from shared.redis_manager import redis_manager
 from shared.config import settings
 from shared.auth_client import HybridClaudeClient, AuthConfig
+from shared.artifact_manager import artifact_manager
 
 
 async def save_result_html(
@@ -29,108 +30,19 @@ async def save_result_html(
     execution_time: float
 ) -> str:
     """
-    Save agent result as HTML file in task-specific directory.
+    Save agent result as HTML file using artifact manager.
 
     Returns:
         Relative path to the saved HTML file
     """
-    # Create task directory with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    task_dir = Path("results") / f"{task_id}_{timestamp}"
-    task_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create HTML file for this subtask
-    filename = f"{subtask_id}_{agent_id}.html"
-    html_file = task_dir / filename
-
-    # Wrap content in full HTML document if not already wrapped
-    if not html_content.strip().lower().startswith("<!doctype") and not html_content.strip().lower().startswith("<html"):
-        full_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Task Result - {subtask_id}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }}
-        .content {{
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }}
-        h1, h2, h3 {{ color: #333; }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-        }}
-        th, td {{
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }}
-        th {{
-            background-color: #667eea;
-            color: white;
-        }}
-        pre {{
-            background: #f4f4f4;
-            padding: 15px;
-            border-radius: 4px;
-            overflow-x: auto;
-        }}
-        code {{
-            background: #f4f4f4;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-        }}
-        .metadata {{
-            font-size: 0.9em;
-            color: #666;
-            margin-top: 10px;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Agent Task Result</h1>
-        <div class="metadata">
-            <strong>Task ID:</strong> {task_id}<br>
-            <strong>Subtask ID:</strong> {subtask_id}<br>
-            <strong>Agent:</strong> {agent_id}<br>
-            <strong>Execution Time:</strong> {execution_time:.2f}s<br>
-            <strong>Timestamp:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        </div>
-    </div>
-    <div class="content">
-        {html_content}
-    </div>
-</body>
-</html>"""
-    else:
-        full_html = html_content
-
-    # Write HTML file
-    html_file.write_text(full_html, encoding='utf-8')
-
-    # Return relative path (convert to string to avoid path resolution issues)
-    return str(task_dir / filename).replace('\\', '/')
+    # Use artifact manager to save HTML result
+    return artifact_manager.save_html_result(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        agent_id=agent_id,
+        html_content=html_content,
+        execution_time=execution_time
+    )
 
 
 
