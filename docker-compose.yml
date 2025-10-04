@@ -1,0 +1,202 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: multi_agent_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: multi_agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: multi_agent_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: multi_agent_orchestrator
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent1:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: multi_agent_agent1
+    env_file:
+      - .env
+    environment:
+      AGENT_ID: agent_1
+      AGENT_PORT: 8001
+      AGENT_CAPABILITIES: data_analysis,code_generation
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  agent2:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: multi_agent_agent2
+    env_file:
+      - .env
+    environment:
+      AGENT_ID: agent_2
+      AGENT_PORT: 8002
+      AGENT_CAPABILITIES: web_scraping,api_integration
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  agent3:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: multi_agent_agent3
+    env_file:
+      - .env
+    environment:
+      AGENT_ID: agent_3
+      AGENT_PORT: 8003
+      AGENT_CAPABILITIES: file_processing,database_operations
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  agent4:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: multi_agent_agent4
+    env_file:
+      - .env
+    environment:
+      AGENT_ID: agent_4
+      AGENT_PORT: 8004
+      AGENT_CAPABILITIES: code_generation,api_integration
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  agent5:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: multi_agent_agent5
+    env_file:
+      - .env
+    environment:
+      AGENT_ID: agent_5
+      AGENT_PORT: 8005
+      AGENT_CAPABILITIES: data_analysis,database_operations
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/multi_agent_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./shared_files:/app/shared_files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: multi_agent_streamlit
+    env_file:
+      - .env
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
