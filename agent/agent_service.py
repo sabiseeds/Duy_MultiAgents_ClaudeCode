@@ -249,6 +249,21 @@ async def execute_task_async(request: TaskExecutionRequest):
     try:
         print(f"[Agent {settings.AGENT_ID}] Executing {request.subtask.id}: {request.subtask.description}")
 
+        # Check for attached files
+        files_info = ""
+        if request.task_context and request.task_context.get('attachments'):
+            from shared.file_storage import file_storage
+            files_list = []
+            for att in request.task_context['attachments']:
+                file_info = file_storage.get_file_info(att['file_path'])
+                files_list.append(
+                    f"  - {att['filename']} ({file_info.get('size_mb', 0)}MB, {att['mime_type']})\n"
+                    f"    Path: {att['file_path']}"
+                )
+
+            if files_list:
+                files_info = f"\n\nAttached Files:\n" + "\n".join(files_list)
+
         # Build prompt for Claude with HTML output requirement
         prompt = f"""You are an AI agent with the following capabilities:
 {', '.join([cap.value for cap in request.subtask.required_capabilities])}
@@ -257,7 +272,7 @@ Execute this task:
 {request.subtask.description}
 
 Context from previous tasks:
-{request.task_context if request.task_context else 'None'}
+{request.task_context.get('previous_results', 'None') if request.task_context else 'None'}{files_info}
 
 IMPORTANT: Provide your response in well-formatted HTML. Structure your response as:
 1. A summary section with key findings

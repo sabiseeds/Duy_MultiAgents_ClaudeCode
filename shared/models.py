@@ -28,6 +28,16 @@ class AgentCapability(str, Enum):
     API_INTEGRATION = "api_integration"
 
 
+class FileAttachment(BaseModel):
+    """File attachment metadata"""
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    mime_type: str
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class SubTask(BaseModel):
     """Individual unit of work within a task"""
     id: str = Field(default_factory=lambda: f"subtask_{uuid.uuid4().hex[:12]}")
@@ -49,7 +59,7 @@ class SubTask(BaseModel):
 
 class Task(BaseModel):
     """User-submitted work request"""
-    id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:16]}")
+    id: str = Field(default_factory=lambda: f"{datetime.utcnow().strftime('%d%m%y%H%M%S')}_task_{uuid.uuid4().hex[:12]}")
     user_id: str = Field(default="default_user")
     description: str = Field(..., min_length=10, max_length=5000)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -58,6 +68,8 @@ class Task(BaseModel):
     subtasks: Optional[List[SubTask]] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    attachments: List[FileAttachment] = Field(default_factory=list)
+    uploads_folder: Optional[str] = None
 
     @field_validator('updated_at')
     @classmethod

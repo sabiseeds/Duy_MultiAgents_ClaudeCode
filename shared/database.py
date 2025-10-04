@@ -38,8 +38,8 @@ class DatabaseManager:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO tasks (id, user_id, description, created_at, updated_at, status, subtasks, result, error)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                INSERT INTO tasks (id, user_id, description, created_at, updated_at, status, subtasks, result, error, attachments, uploads_folder)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 """,
                 task.id,
                 task.user_id,
@@ -49,7 +49,9 @@ class DatabaseManager:
                 task.status.value,
                 json.dumps([st.model_dump() for st in task.subtasks]) if task.subtasks else None,
                 json.dumps(task.result) if task.result else None,
-                task.error
+                task.error,
+                json.dumps([att.model_dump(mode='python') for att in task.attachments]) if task.attachments else None,
+                task.uploads_folder
             )
         return task
 
@@ -79,6 +81,15 @@ class DatabaseManager:
             if isinstance(result, str):
                 result = json.loads(result) if result else None
 
+            # Parse attachments field
+            attachments = []
+            if row.get('attachments'):
+                from shared.models import FileAttachment
+                attachments_data = row['attachments']
+                if isinstance(attachments_data, str):
+                    attachments_data = json.loads(attachments_data)
+                attachments = [FileAttachment(**att) for att in attachments_data]
+
             return Task(
                 id=row['id'],
                 user_id=row['user_id'],
@@ -88,7 +99,9 @@ class DatabaseManager:
                 status=TaskStatus(row['status']),
                 subtasks=subtasks,
                 result=result,
-                error=row['error']
+                error=row['error'],
+                attachments=attachments,
+                uploads_folder=row.get('uploads_folder')
             )
 
     async def update_task_status(

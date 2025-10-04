@@ -4,15 +4,16 @@ Coordinates task submission, agent assignment, and result aggregation.
 """
 import asyncio
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Form, File, UploadFile
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, List
 
 from shared.models import Task, TaskStatus, SubTaskResult, AgentCapability
 from shared.database import db_manager
 from shared.redis_manager import redis_manager
 from shared.config import settings
+from shared.file_storage import file_storage
 from orchestrator.task_analyzer import TaskAnalyzer
 
 
@@ -59,11 +60,12 @@ task_analyzer = TaskAnalyzer()
 
 @app.post("/tasks")
 async def create_task(
-    description: str = Query(..., min_length=10, max_length=5000),
-    user_id: str = Query(default="default_user")
+    description: str = Form(..., min_length=10, max_length=5000),
+    user_id: str = Form(default="default_user"),
+    files: Optional[List[UploadFile]] = File(default=None)
 ):
     """
-    Create and submit a new task.
+    Create and submit a new task with optional file attachments.
     Decomposes task into subtasks and queues them for execution.
     """
     try:
@@ -78,8 +80,41 @@ async def create_task(
             subtasks=subtasks
         )
 
+        # Handle file uploads if present
+        if files:
+            attachments = []
+            for upload_file in files:
+                # Read file content
+                file_content = await upload_file.read()
+
+                # Save file and get metadata
+                attachment = file_storage.save_upload(
+                    task_id=task.id,
+                    file_content=file_content,
+                    original_filename=upload_file.filename
+                )
+                attachments.append(attachment)
+
+            task.attachments = attachments
+            task.uploads_folder = str(file_storage.UPLOADS_BASE_DIR / task.id)
+
         # Save to database
         await db_manager.create_task(task)
+
+        # Prepare context with file attachments
+        task_context = {}
+        if task.attachments:
+            # Convert attachments to dict with ISO datetime strings
+            attachments_data = []
+            for att in task.attachments:
+                att_dict = att.model_dump(mode='python')
+                # Convert datetime to ISO string for JSON serialization
+                if 'uploaded_at' in att_dict and att_dict['uploaded_at']:
+                    att_dict['uploaded_at'] = att_dict['uploaded_at'].isoformat()
+                attachments_data.append(att_dict)
+
+            task_context['attachments'] = attachments_data
+            task_context['uploads_folder'] = task.uploads_folder
 
         # Queue subtasks with no dependencies
         queued_count = 0
@@ -88,7 +123,7 @@ async def create_task(
                 await redis_manager.enqueue_task(
                     task_id=task.id,
                     subtask=subtask,
-                    context={}
+                    context=task_context
                 )
                 queued_count += 1
 
@@ -100,7 +135,8 @@ async def create_task(
             "task_id": task.id,
             "status": "created",
             "subtasks_count": len(subtasks),
-            "initial_subtasks_queued": queued_count
+            "initial_subtasks_queued": queued_count,
+            "files_uploaded": len(task.attachments)
         }
 
     except Exception as e:

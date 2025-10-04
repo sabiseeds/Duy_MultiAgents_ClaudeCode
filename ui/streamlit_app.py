@@ -49,13 +49,25 @@ def show_task_submission():
         description = st.text_area(
             "Task Description",
             height=150,
-            placeholder="Enter a detailed task description (min 10 characters)...\n\nExamples:\n- Calculate factorial of 10\n- Analyze sales data and generate a report\n- Fetch weather data from API and create visualizations"
+            placeholder="Enter a detailed task description (min 10 characters)...\n\nExamples:\n- Calculate factorial of 10\n- Analyze sales data and generate a report\n- Fetch weather data from API and create visualizations\n- Analyze this CSV file and create a summary report"
         )
 
         user_id = st.text_input(
             "User ID (optional)",
             value="streamlit_user",
             help="Identifier for tracking your tasks"
+        )
+
+        # File upload section
+        st.markdown("#### 📎 Attach Files (Optional)")
+        st.caption("Supported: Images (jpg, png), Documents (pdf, docx, txt), Spreadsheets (csv, xlsx), Archives (zip) - Max 50MB per file")
+
+        uploaded_files = st.file_uploader(
+            "Upload files for agents to process",
+            type=['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt',
+                  'xls', 'xlsx', 'csv', 'zip', 'rar', 'json', 'xml', 'yaml', 'md'],
+            accept_multiple_files=True,
+            help="Agents will have access to these files when executing the task"
         )
 
         submitted = st.form_submit_button("🚀 Submit Task", use_container_width=True)
@@ -68,13 +80,26 @@ def show_task_submission():
             else:
                 with st.spinner("Submitting task..."):
                     try:
+                        # Prepare multipart form data
+                        files_data = []
+                        form_data = {
+                            "description": description,
+                            "user_id": user_id
+                        }
+
+                        # Add uploaded files to form data
+                        if uploaded_files:
+                            for uploaded_file in uploaded_files:
+                                files_data.append(
+                                    ("files", (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type))
+                                )
+
+                        # Submit task with files
                         response = httpx.post(
                             f"{ORCHESTRATOR_URL}/tasks",
-                            params={
-                                "description": description,
-                                "user_id": user_id
-                            },
-                            timeout=30.0
+                            data=form_data,
+                            files=files_data if files_data else None,
+                            timeout=60.0
                         )
 
                         if response.status_code == 200:
@@ -83,6 +108,9 @@ def show_task_submission():
                             st.info(f"**Task ID:** `{data['task_id']}`")
                             st.info(f"**Subtasks Created:** {data['subtasks_count']}")
                             st.info(f"**Queued for Execution:** {data['initial_subtasks_queued']}")
+
+                            if data.get('files_uploaded', 0) > 0:
+                                st.info(f"**Files Uploaded:** {data['files_uploaded']}")
 
                             # Store task ID in session state for monitoring
                             st.session_state['last_task_id'] = data['task_id']
@@ -177,6 +205,22 @@ def show_task_status(task_id: str):
         st.write(f"**User ID:** {task['user_id']}")
         st.write(f"**Created:** {task['created_at']}")
         st.write(f"**Updated:** {task['updated_at']}")
+
+        # Attached files
+        if task.get('attachments') and len(task['attachments']) > 0:
+            st.markdown("#### 📎 Attached Files")
+            for att in task['attachments']:
+                file_size_mb = att['file_size'] / (1024 * 1024)
+                st.write(f"- **{att['original_filename']}** ({file_size_mb:.2f} MB, {att['mime_type']})")
+                if os.path.exists(att['file_path']):
+                    with open(att['file_path'], 'rb') as f:
+                        st.download_button(
+                            f"⬇️ Download {att['filename']}",
+                            data=f.read(),
+                            file_name=att['original_filename'],
+                            mime=att['mime_type'],
+                            key=f"download_att_{att['filename']}"
+                        )
 
         # Subtasks
         if task.get('subtasks'):
