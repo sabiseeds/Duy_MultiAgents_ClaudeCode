@@ -4,6 +4,7 @@ Coordinates task submission, agent assignment, and result aggregation.
 """
 import asyncio
 import httpx
+import random
 from fastapi import FastAPI, HTTPException, Query, Form, File, UploadFile
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -256,7 +257,8 @@ async def dispatch_tasks():
                 available_agents = await redis_manager.get_available_agents(cap)
 
                 if available_agents:
-                    agent_id = available_agents[0]
+                    # Use random selection for better load distribution
+                    agent_id = random.choice(available_agents)
 
                     # Get agent details
                     agent_status = await redis_manager.get_agent_status(agent_id)
